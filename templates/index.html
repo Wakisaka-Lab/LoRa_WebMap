@@ -6,33 +6,73 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
-        body { margin: 0; padding: 0; font-family: sans-serif; }
+        body { margin: 0; padding: 0; font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f4f4f4;}
         #map { height: 100vh; width: 100vw; }
+        
+        /* いい感じのUI（グラスモーフィズムデザイン） */
         #overlay {
-            position: absolute; top: 10px; right: 10px; z-index: 1000;
-            background: rgba(255, 255, 255, 0.95); padding: 15px; border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.3); width: 260px;
+            position: absolute; top: 20px; right: 20px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.6); /* 半透明の白 */
+            backdrop-filter: blur(12px); /* 背景のすりガラス効果 */
+            -webkit-backdrop-filter: blur(12px);
+            padding: 20px; border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            width: 260px; color: #2c3e50;
         }
-        .info-row { margin: 5px 0; font-size: 14px; }
+        .header { font-size: 18px; font-weight: bold; margin-top: 0; margin-bottom: 15px; display: flex; align-items: center; }
+        
+        .info-container {
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 12px; padding: 15px; margin-bottom: 15px;
+            box-shadow: inset 0 0 5px rgba(255, 255, 255, 0.5);
+        }
+        .info-row { 
+            margin: 8px 0; font-size: 14px; display: flex; justify-content: space-between; 
+            border-bottom: 1px dashed #bdc3c7; padding-bottom: 6px;
+        }
+        .info-row:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0;}
+        .info-row strong { color: #2980b9; font-weight: 600;}
+
         .mode-switch {
-            margin-top: 10px; padding-top: 10px; border-top: 1px solid #ccc;
-            font-size: 14px;
+            font-size: 14px; background: rgba(255, 255, 255, 0.5);
+            padding: 15px; border-radius: 12px;
         }
-        .mode-switch label { display: block; margin-bottom: 5px; cursor: pointer; }
+        .mode-switch p { margin: 0 0 10px 0; font-weight: bold; color: #34495e;}
+        .mode-switch label { display: block; margin-bottom: 8px; cursor: pointer; }
+        .mode-switch input[type="radio"] { accent-color: #2980b9; }
+
+        /* 現在位置のピコンピコン（パルスアニメーション） */
+        .pulse-marker {
+            background: rgba(41, 128, 185, 0.85);
+            border-radius: 50%;
+            width: 16px; height: 16px;
+            box-shadow: 0 0 0 rgba(41, 128, 185, 0.6);
+            animation: pulse 1.5s infinite;
+            border: 2px solid white;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(41, 128, 185, 0.7); }
+            70% { box-shadow: 0 0 0 18px rgba(41, 128, 185, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(41, 128, 185, 0); }
+        }
     </style>
 </head>
 <body>
 
     <div id="overlay">
-        <h2 style="margin-top:0; font-size:18px; margin-bottom:10px;">📡 LoRa Dashboard</h2>
+        <div class="header">📡 LoRa Dashboard</div>
         
-        <div class="info-row">総受信数: <strong id="count">0</strong> パケット</div>
-        <div class="info-row">最終受信: <strong id="last-time">--:--:--</strong></div>
-        <div class="info-row">RSSI: <strong id="last-rssi">--</strong></div>
-        <div class="info-row">SNR: <strong id="last-snr">--</strong></div>
+        <div class="info-container">
+            <div class="info-row">総受信数: <strong id="count">0</strong></div>
+            <div class="info-row">最終受信: <strong id="last-time">--:--:--</strong></div>
+            <div class="info-row">RSSI: <strong id="last-rssi">--</strong></div>
+            <div class="info-row">SNR: <strong id="last-snr">--</strong></div>
+        </div>
 
         <div class="mode-switch">
-            <strong>表示モード</strong>
+            <p>表示モード</p>
             <label>
                 <input type="radio" name="displayMode" value="realtime" checked onchange="switchMode()">
                 リアルタイム (最新のみ)
@@ -54,20 +94,28 @@
         }).addTo(map);
 
         var markers = []; 
-        var trailLine = L.polyline([], {color: 'blue', weight: 3, opacity: 0.5}).addTo(map); // 軌跡を線でも結ぶ
+        var trailLine = L.polyline([], {color: '#2980b9', weight: 4, opacity: 0.6}).addTo(map);
+
+        // パルス用アイコンの定義
+        var pulseIcon = L.divIcon({
+            className: 'pulse-marker',
+            iconSize: [16, 16],
+            iconAnchor: [8, 8]
+        });
+
+        // デフォルトアイコンの定義
+        var defaultIcon = new L.Icon.Default();
 
         // モード切り替え時に呼ばれる関数
         function switchMode() {
             let mode = document.querySelector('input[name="displayMode"]:checked').value;
             
             if (mode === 'realtime') {
-                // 最新以外のマーカーを地図から消す
                 for (let i = 0; i < markers.length - 1; i++) {
                     map.removeLayer(markers[i]);
                 }
                 map.removeLayer(trailLine);
             } else if (mode === 'trail') {
-                // すべてのマーカーを地図に表示し直す
                 for (let i = 0; i < markers.length; i++) {
                     if (!map.hasLayer(markers[i])) {
                         markers[i].addTo(map);
@@ -95,29 +143,38 @@
                             markers.push(marker);
                             trailLine.addLatLng([pt.lat, pt.lon]);
 
-                            // リアルタイムモードの場合
                             if (mode === 'realtime') {
-                                // 今追加したものを表示
                                 marker.addTo(map);
-                                // 1つ前の古いマーカーがあれば消す
                                 if (markers.length > 1) {
                                     map.removeLayer(markers[markers.length - 2]);
                                 }
                             } 
-                            // 軌跡モードの場合
                             else {
                                 marker.addTo(map);
                             }
 
-                            // ステータスパネルの数値を更新
                             document.getElementById('count').innerText = data.length;
                             document.getElementById('last-time').innerText = pt.time;
                             document.getElementById('last-rssi').innerText = pt.rssi ? pt.rssi + ' dBm' : '--';
                             document.getElementById('last-snr').innerText = pt.snr ? pt.snr + ' dB' : '--';
 
-                            // 最新のピンの位置にカメラを移動
                             if (i === data.length - 1) {
                                 map.flyTo([pt.lat, pt.lon], 16, {animate: true, duration: 1.0});
+                            }
+                        }
+
+                        // アイコンの更新処理：最新のピンのみパルスエフェクトを適用
+                        if (markers.length > 0) {
+                            for (let j = 0; j < markers.length; j++) {
+                                if (j === markers.length - 1) {
+                                    // 最新のマーカー
+                                    markers[j].setIcon(pulseIcon);
+                                    markers[j].setZIndexOffset(1000); // 手前に表示
+                                } else {
+                                    // 過去のマーカー
+                                    markers[j].setIcon(defaultIcon);
+                                    markers[j].setZIndexOffset(0);
+                                }
                             }
                         }
                     }
