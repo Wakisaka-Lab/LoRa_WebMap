@@ -1,15 +1,16 @@
 from flask import Flask, render_template, jsonify
 import serial
+import serial.tools.list_ports  # 追加: COMポート一覧取得用
 import threading
 from datetime import datetime
 import time
+import sys
 
 app = Flask(__name__)
 
 # ==========================================
 # 設定とグローバル変数
 # ==========================================
-COM_PORT = 'socket://127.0.0.1:2323'
 BAUD_RATE = 9600
 received_points = [] # 受信した座標を溜めるリスト
 
@@ -21,12 +22,47 @@ def decode_hex_to_float(hex_str):
     return val / 100000.0
 
 # ==========================================
+# 利用可能なCOMポートを選択する関数
+# ==========================================
+def select_com_port():
+    print("接続されているCOMポートを検索中...")
+    ports = list(serial.tools.list_ports.comports())
+    
+    if not ports:
+        print("⚠️ 利用可能なCOMポートが見つかりませんでした。")
+        print("LoRaモジュールが正しく接続されているか確認してください。")
+        return None
+    
+    print("\n【利用可能なCOMポート一覧】")
+    for i, port in enumerate(ports):
+        # デバイス名と説明を表示（例: [0] COM3 - USB Serial Port）
+        print(f" [{i}] {port.device} - {port.description}")
+        
+    print("-" * 40)
+    
+    while True:
+        try:
+            choice = input(f"接続するCOMポートの番号 (0-{len(ports)-1}) を入力してください: ")
+            index = int(choice)
+            if 0 <= index < len(ports):
+                selected_port = ports[index].device
+                return selected_port
+            else:
+                print("⚠️ リストにある正しい番号を入力してください。")
+        except ValueError:
+            print("⚠️ 数値を入力してください。")
+        except KeyboardInterrupt:
+            print("\nキャンセルされました。")
+            return None
+
+# ==========================================
 # 裏で動き続けるシリアル通信スレッド
 # ==========================================
-def serial_loop():
+def serial_loop(port_name):
     try:
-        ser = serial.serial_for_url('socket://127.0.0.1:2323', timeout=1)
-        print(f"[{COM_PORT}] 基地局モジュールに接続しました。")  
+        # 選択されたポート名を使って接続
+        ser = serial.Serial(port_name, BAUD_RATE, timeout=1)
+        print(f"\n✅ [{port_name}] 基地局モジュールに接続しました。受信を待機します...")  
        
         ser.write(b"p2p rx 0\r\n")
 
@@ -89,26 +125,37 @@ def serial_loop():
                     print(f"  -> 復元成功: 緯度 {lat}, 経度 {lon}, RSSI: {rssi}, SNR: {snr}")
                 time.sleep(0.5)
                 ser.write(b"p2p rx 0\r\n") 
+    except serial.SerialException as e:
+        print(f"\n❌ シリアル通信エラー: {port_name} を開けませんでした。")
+        print(f"詳細: {e}")
+        print("他のアプリケーションがこのポートを使用していないか確認してください。")
     except Exception as e:
-        print(f"シリアル通信エラー: {e}")
+        print(f"\n❌ 予期せぬエラー: {e}")
 
 # ==========================================
 # FlaskのWebルーティング
 # ==========================================
-# 1. ブラウザでアクセスしたときに地図画面(HTML)を返す
 @app.route('/')
 def index():
     return render_template('index.html')
 
-# 2. 地図画面からの「最新データちょうだい」というリクエストに応えるAPI
 @app.route('/api/points')
 def get_points():
     return jsonify(received_points)
 
 if __name__ == '__main__':
-    # Webサーバーを立ち上げる前に、裏でシリアル受信スレッドを起動
-    thread = threading.Thread(target=serial_loop, daemon=True)
-    thread.start()
+    # 1. まずターミナル上でCOMポートを選択させる
+    target_port = select_com_port()
     
-    # Webサーバー起動 (host='0.0.0.0' にすれば同じWi-Fiの別端末からも見れます)
-    app.run(host='127.0.0.1', port=5000, debug=False)
+    # 2. ポートが選択された場合のみ、スレッドとサーバーを起動する
+    if target_port:
+        # 引数 target_port を渡してシリアル受信スレッドを起動
+        thread = threading.Thread(target=serial_loop, args=(target_port,), daemon=True)
+        thread.start()
+        
+        # Webサーバー起動
+        print(f"\n🌍 Webサーバーを起動します。ブラウザで http://127.0.0.1:5000 にアクセスしてください。")
+        app.run(host='127.0.0.1', port=5000, debug=False)
+    else:
+        print("アプリケーションを終了します。")
+        sys.exit(1)
