@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>LoRa Live Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: sans-serif; }
+        #map { height: 100vh; width: 100vw; }
+        #overlay {
+            position: absolute; top: 10px; right: 10px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.95); padding: 15px; border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3); width: 260px;
+        }
+        .info-row { margin: 5px 0; font-size: 14px; }
+        .mode-switch {
+            margin-top: 10px; padding-top: 10px; border-top: 1px solid #ccc;
+            font-size: 14px;
+        }
+        .mode-switch label { display: block; margin-bottom: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div id="overlay">
+        <h2 style="margin-top:0; font-size:18px; margin-bottom:10px;">📡 LoRa Dashboard</h2>
+        
+        <div class="info-row">総受信数: <strong id="count">0</strong> パケット</div>
+        <div class="info-row">最終受信: <strong id="last-time">--:--:--</strong></div>
+        <div class="info-row">RSSI: <strong id="last-rssi">--</strong></div>
+        <div class="info-row">SNR: <strong id="last-snr">--</strong></div>
+
+        <div class="mode-switch">
+            <strong>表示モード</strong>
+            <label>
+                <input type="radio" name="displayMode" value="realtime" checked onchange="switchMode()">
+                リアルタイム (最新のみ)
+            </label>
+            <label>
+                <input type="radio" name="displayMode" value="trail" onchange="switchMode()">
+                軌跡 (全て表示)
+            </label>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+        var map = L.map('map').setView([35.6895, 139.6917], 13);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        var markers = []; 
+        var trailLine = L.polyline([], {color: 'blue', weight: 3, opacity: 0.5}).addTo(map); // 軌跡を線でも結ぶ
+
+        // モード切り替え時に呼ばれる関数
+        function switchMode() {
+            let mode = document.querySelector('input[name="displayMode"]:checked').value;
+            
+            if (mode === 'realtime') {
+                // 最新以外のマーカーを地図から消す
+                for (let i = 0; i < markers.length - 1; i++) {
+                    map.removeLayer(markers[i]);
+                }
+                map.removeLayer(trailLine);
+            } else if (mode === 'trail') {
+                // すべてのマーカーを地図に表示し直す
+                for (let i = 0; i < markers.length; i++) {
+                    if (!map.hasLayer(markers[i])) {
+                        markers[i].addTo(map);
+                    }
+                }
+                trailLine.addTo(map);
+            }
+        }
+
+        function fetchPoints() {
+            fetch('/api/points')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.length > markers.length) {
+                        let mode = document.querySelector('input[name="displayMode"]:checked').value;
+
+                        for (let i = markers.length; i < data.length; i++) {
+                            let pt = data[i];
+                            let popupText = `<b>受信 #${i+1}</b><br>
+                                             時刻: ${pt.time}<br>
+                                             RSSI: ${pt.rssi} dBm<br>
+                                             SNR: ${pt.snr} dB`;
+                            
+                            let marker = L.marker([pt.lat, pt.lon]).bindPopup(popupText);
+                            markers.push(marker);
+                            trailLine.addLatLng([pt.lat, pt.lon]);
+
+                            // リアルタイムモードの場合
+                            if (mode === 'realtime') {
+                                // 今追加したものを表示
+                                marker.addTo(map);
+                                // 1つ前の古いマーカーがあれば消す
+                                if (markers.length > 1) {
+                                    map.removeLayer(markers[markers.length - 2]);
+                                }
+                            } 
+                            // 軌跡モードの場合
+                            else {
+                                marker.addTo(map);
+                            }
+
+                            // ステータスパネルの数値を更新
+                            document.getElementById('count').innerText = data.length;
+                            document.getElementById('last-time').innerText = pt.time;
+                            document.getElementById('last-rssi').innerText = pt.rssi ? pt.rssi + ' dBm' : '--';
+                            document.getElementById('last-snr').innerText = pt.snr ? pt.snr + ' dB' : '--';
+
+                            // 最新のピンの位置にカメラを移動
+                            if (i === data.length - 1) {
+                                map.flyTo([pt.lat, pt.lon], 16, {animate: true, duration: 1.0});
+                            }
+                        }
+                    }
+                });
+        }
+
+        setInterval(fetchPoints, 2000);
+    </script>
+</body>
+</html>
